@@ -20,20 +20,26 @@
 package org.openrepose.filters.openapivalidator
 
 import java.io.InputStream
+import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.nio.file.Paths
 import java.util.Collections
 
 import com.atlassian.oai.validator.SwaggerRequestResponseValidator
 import com.atlassian.oai.validator.model.{Request, SimpleRequest}
 import com.atlassian.oai.validator.report.ValidationReport
 import com.atlassian.oai.validator.report.ValidationReport.Level
-import com.typesafe.scalalogging.slf4j.StrictLogging
-import javax.inject.Named
+import javax.inject.{Inject, Named}
 import javax.servlet._
 import javax.servlet.http.{HttpServletRequest, HttpServletResponse}
 import org.openrepose.commons.utils.io.BufferedServletInputStream
 import org.openrepose.commons.utils.servlet.http.HttpServletRequestWrapper
+import org.openrepose.core.filter.AbstractConfiguredFilter
+import org.openrepose.core.services.config.ConfigurationService
+import org.openrepose.core.spring.ReposeSpringProperties
 import org.openrepose.filters.openapivalidator.OpenApiValidatorFilter._
+import org.openrepose.filters.openapivalidator.config.OpenApiValidatorConfig
+import org.springframework.beans.factory.annotation.Value
 
 import scala.collection.JavaConverters._
 import scala.io.Source
@@ -46,29 +52,22 @@ import scala.io.Source
   * - Report messages should be typed for easier analysis
   * - Custom validations support is necessary for vendor extension validations (e.g., RBAC).
   * - Abstract the core validation and reporting logic so that it is not tied to OpenAPI.
-  * That is, do not use OpenAPI model objects in the core, and provide a model for requests/responses.
-  * Doing so would enable bindings to exist multiple API definition formats (e.g., OpenAPI, RAML, WADL).
+  *   That is, do not use OpenAPI model objects in the core, and provide a model for requests/responses.
+  *   Doing so would enable bindings to exist multiple API definition formats (e.g., OpenAPI, RAML, WADL).
   */
 @Named
-class OpenApiValidatorFilter extends Filter with StrictLogging {
+class OpenApiValidatorFilter @Inject()(@Value(ReposeSpringProperties.CORE.CONFIG_ROOT) configurationRoot: String,
+                                       configurationService: ConfigurationService)
+  extends AbstractConfiguredFilter[OpenApiValidatorConfig](configurationService) {
 
-  // fixme: this currently always loads a swagger file resource included in the artifact,
-  // fixme: but should load a file provided by configuration
-  private val validator: SwaggerRequestResponseValidator = SwaggerRequestResponseValidator
-    .createFor("swagger.yaml")
-    .build()
+  override val DEFAULT_CONFIG: String = "open-api-validator.cfg.xml"
+  override val SCHEMA_LOCATION: String = "/META-INF/schema/config/open-api-validator.xsd"
 
-  override def init(filterConfig: FilterConfig): Unit = {
-    logger.trace("init called")
-  }
+  private var validator: SwaggerRequestResponseValidator = _
 
-  override def doFilter(request: ServletRequest, response: ServletResponse, chain: FilterChain): Unit = {
-    logger.trace("doFilter called")
-
-    val httpServletRequest = request.asInstanceOf[HttpServletRequest]
-    val httpServletResponse = response.asInstanceOf[HttpServletResponse]
-    val bufferedRequestStream = new BufferedServletInputStream(httpServletRequest.getInputStream)
-    val wrappedHttpServletRequest = new HttpServletRequestWrapper(httpServletRequest, bufferedRequestStream)
+  override def doWork(httpRequest: HttpServletRequest, httpResponse: HttpServletResponse, chain: FilterChain): Unit = {
+    val bufferedRequestStream = new BufferedServletInputStream(httpRequest.getInputStream)
+    val wrappedHttpServletRequest = new HttpServletRequestWrapper(httpRequest, bufferedRequestStream)
 
     bufferedRequestStream.mark(Integer.MAX_VALUE)
 
@@ -87,13 +86,46 @@ class OpenApiValidatorFilter extends Filter with StrictLogging {
       .collectFirst({ case Issue(issue) => issue })
 
     errorStatus match {
-      case Some(issue) => httpServletResponse.sendError(issue.statusCode, issue.message)
-      case None => chain.doFilter(wrappedHttpServletRequest, response)
+      case Some(issue) => httpResponse.sendError(issue.statusCode, issue.message)
+      case None => chain.doFilter(wrappedHttpServletRequest, httpResponse)
     }
   }
 
-  override def destroy(): Unit = {
-    logger.trace("destroy called")
+  override def doConfigurationUpdated(newConfiguration: OpenApiValidatorConfig): OpenApiValidatorConfig = {
+    validator = SwaggerRequestResponseValidator
+      .createFor(resolveHref(newConfiguration.getHref))
+      .build()
+
+    newConfiguration
+  }
+
+  /**
+    * Returns a [[String]] representation of an absolute [[URI]].
+    *
+    * This method will resolve relative [[URI]] representations as files
+    * relative to the configuration root directory.
+    *
+    * @param href a [[String]] representation of a [[URI]]
+    * @return a [[String]] representation of an absolute [[URI]]
+    */
+  private def resolveHref(href: String): String = {
+    val hrefUri = URI.create(href)
+    if (hrefUri.isAbsolute) {
+      // The URI is absolute, so return it as-is.
+      // This handles hrefs pointing to remote resources (e.g., HTTP, FTP).
+      hrefUri.toString
+    } else {
+      // The URI is relative, so process it as a file.
+      val oaiDocumentPath = Paths.get(href)
+      if (oaiDocumentPath.isAbsolute) {
+        // The file path is absolute, so return the absolute URI for the file path.
+        oaiDocumentPath.toUri.toString
+      } else {
+        // The file path is relative, so resolve it relative to the configuration directory
+        // and return the absolute URI.
+        Paths.get(configurationRoot).resolve(oaiDocumentPath).toUri.toString
+      }
+    }
   }
 }
 
