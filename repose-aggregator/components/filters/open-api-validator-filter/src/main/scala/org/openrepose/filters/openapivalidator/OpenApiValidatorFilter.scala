@@ -47,13 +47,17 @@ import scala.io.Source
 /**
   * This filter will validate requests against an OpenAPI definition.
   *
-  * While the underlying validation library is a great start,
-  * I would suggest the following enhancements:
-  * - Report messages should be typed for easier analysis
+  * While the underlying validation library is a great start, the following would need to be addressed:
+  * - Report messages should be typed for easier analysis.
+  *   - We can kind work around this by mapping message keys to types.
+  * - Vendor extensions support is necessary (exposing vendor extensions at various level during validation).
   * - Custom validations support is necessary for vendor extension validations (e.g., RBAC).
-  * - Abstract the core validation and reporting logic so that it is not tied to OpenAPI.
-  *   That is, do not use OpenAPI model objects in the core, and provide a model for requests/responses.
+  *
+  * My wishlist for the underlying validation library would include:
+  * - Abstract the core validation and reporting logic so that it is not tied to OpenAPI. That is,
+  *   do not use OpenAPI model objects in the core, and provide a model for requests/responses.
   *   Doing so would enable bindings to exist multiple API definition formats (e.g., OpenAPI, RAML, WADL).
+  * - Metrics. With proper metrics, we could provide API coverage functionality like api-checker.
   */
 @Named
 class OpenApiValidatorFilter @Inject()(@Value(ReposeSpringProperties.CORE.CONFIG_ROOT) configurationRoot: String,
