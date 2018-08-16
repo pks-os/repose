@@ -51,6 +51,7 @@ import scala.io.Source
   * - Report messages should be typed for easier analysis.
   *   - We can kind work around this by mapping message keys to types.
   * - Vendor extensions support is necessary (exposing vendor extensions at various level during validation).
+  *   - Will require exposing the Path model in addition to the Operation model
   * - Custom validations support is necessary for vendor extension validations (e.g., RBAC).
   *
   * My wishlist for the underlying validation library would include:
@@ -86,6 +87,8 @@ class OpenApiValidatorFilter @Inject()(@Value(ReposeSpringProperties.CORE.CONFIG
 
     // todo: prioritize failures in a flexible way so that the correct failure can be selected and the correct
     // todo: response can be returned
+    // todo: annoyingly, path and method checks are handled separately from all others (forcing the validation
+    // todo:   ordering to be path -> method -> all other checks) and return early on failure
     val errorStatus = validationReport.getMessages.asScala
       .collectFirst({ case Issue(issue) => issue })
 
